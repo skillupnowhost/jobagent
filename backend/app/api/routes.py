@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, File, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -10,6 +10,7 @@ from app.models.job import Job
 from app.models.application import Application, ApplicationLog
 from app.models.skill import SkillProgress, DailyReport
 from app.services.resume_builder import generate_resume_pdf, generate_cover_letter
+from app.services.resume_parser import parse_resume
 from app.services.job_search import JobSearchAggregator, get_search_queries_for_profile
 from app.services.job_matcher import calculate_match_score, should_apply
 from app.services.application_tracker import ApplicationTracker
@@ -111,6 +112,24 @@ def download_resume(filename: str):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Resume not found")
     return FileResponse(filepath, media_type="application/pdf", filename=filename)
+
+
+@router.post("/resume/parse")
+async def parse_resume_upload(file: UploadFile = File(...)):
+    content_type = file.content_type or ""
+    if not any(t in content_type for t in ["pdf", "docx", "openxmlformats", "wordprocessingml", "msword", "text"]):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Please upload a PDF, DOCX, or TXT file.",
+        )
+    file_bytes = await file.read()
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Maximum 10 MB allowed.")
+    try:
+        extracted = parse_resume(file_bytes, content_type)
+        return {"success": True, "data": extracted}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to parse resume: {exc}")
 
 
 @router.post("/resume/cover-letter")

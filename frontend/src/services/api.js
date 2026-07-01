@@ -16,6 +16,11 @@ export const resumeApi = {
   generate: (jobId) => api.post(`/resume/generate${jobId ? `?job_id=${jobId}` : ''}`),
   download: (filename) => `${API_BASE}/resume/download/${filename}`,
   coverLetter: (jobId) => api.post(`/resume/cover-letter?job_id=${jobId}`),
+  parseUpload: (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return axios.post(`${API_BASE}/resume/parse`, form);
+  },
 };
 
 export const jobsApi = {

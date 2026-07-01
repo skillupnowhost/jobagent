@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { Save, Plus, Trash2, Loader } from 'lucide-react';
-import { profileApi } from '../services/api';
+import React, { useEffect, useRef, useState } from 'react';
+import { Save, Plus, Trash2, Loader, Upload, CheckCircle, XCircle } from 'lucide-react';
+import { profileApi, resumeApi } from '../services/api';
 
 const DEFAULT_PROFILE = {
   name: '', email: '', phone: '', location: '',
@@ -23,6 +23,9 @@ export default function Profile() {
   const [tab, setTab] = useState('basic');
   const [newSkill, setNewSkill] = useState('');
   const [newCert, setNewCert] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     profileApi.get()
@@ -45,6 +48,53 @@ export default function Profile() {
   };
 
   const update = (field, value) => setProfile(p => ({ ...p, [field]: value }));
+
+  const FIELD_LABELS = {
+    name: 'Name', email: 'Email', phone: 'Phone', location: 'Location',
+    linkedin_url: 'LinkedIn URL', github_url: 'GitHub URL', portfolio_url: 'Portfolio URL',
+    professional_summary: 'Professional Summary', experience_years: 'Experience (years)',
+    skills: 'Skills', experience: 'Work Experience', education: 'Education',
+    certifications: 'Certifications', projects: 'Projects',
+  };
+
+  const handleResumeUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadMsg(null);
+    try {
+      const res = await resumeApi.parseUpload(file);
+      const extracted = res.data.data || {};
+      const source = extracted._source;
+
+      const merged = { ...profile };
+      const filled = [];
+      for (const [key, val] of Object.entries(extracted)) {
+        if (key.startsWith('_')) continue;
+        if (val === null || val === undefined) continue;
+        if (typeof val === 'string' && !val.trim()) continue;
+        if (Array.isArray(val) && val.length === 0) continue;
+        if (typeof val === 'number' && val === 0) continue;
+        merged[key] = val;
+        if (FIELD_LABELS[key]) filled.push(FIELD_LABELS[key]);
+      }
+
+      setProfile(merged);
+      setUploadMsg({
+        type: 'success',
+        text: source === 'ai'
+          ? `AI filled ${filled.length} field${filled.length !== 1 ? 's' : ''}: ${filled.join(', ')}`
+          : `Extracted ${filled.length} field${filled.length !== 1 ? 's' : ''}: ${filled.join(', ')} (add ANTHROPIC_API_KEY for full AI extraction)`,
+      });
+    } catch (err) {
+      setUploadMsg({
+        type: 'error',
+        text: err.response?.data?.detail || 'Failed to parse resume. Please try a PDF or DOCX file.',
+      });
+    }
+    setUploading(false);
+    e.target.value = '';
+  };
 
   const addSkill = () => {
     if (!newSkill.trim()) return;
@@ -91,20 +141,50 @@ export default function Profile() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">Profile</h1>
-        <button
-          onClick={save}
-          disabled={saving}
-          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition ${
-            saved ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'
-          } disabled:opacity-50`}
-        >
-          {saving ? <><Loader size={16} className="animate-spin" /> Saving...</>
-           : saved ? <><Save size={16} /> Saved!</>
-           : <><Save size={16} /> Save Profile</>}
-        </button>
+        <div className="flex items-center gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.txt"
+            className="hidden"
+            onChange={handleResumeUpload}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition disabled:opacity-50"
+          >
+            {uploading ? <><Loader size={16} className="animate-spin" /> Parsing...</> : <><Upload size={16} /> Upload Resume</>}
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition ${
+              saved ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'
+            } disabled:opacity-50`}
+          >
+            {saving ? <><Loader size={16} className="animate-spin" /> Saving...</>
+             : saved ? <><Save size={16} /> Saved!</>
+             : <><Save size={16} /> Save Profile</>}
+          </button>
+        </div>
       </div>
+
+      {uploadMsg && (
+        <div className={`flex items-start gap-3 p-4 rounded-lg border text-sm ${
+          uploadMsg.type === 'success'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : 'bg-red-50 border-red-200 text-red-800'
+        }`}>
+          {uploadMsg.type === 'success'
+            ? <CheckCircle size={18} className="shrink-0 mt-0.5 text-green-600" />
+            : <XCircle size={18} className="shrink-0 mt-0.5 text-red-600" />}
+          <span className="flex-1">{uploadMsg.text}</span>
+          <button onClick={() => setUploadMsg(null)} className="shrink-0 opacity-60 hover:opacity-100">✕</button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-2 border-b overflow-x-auto">
