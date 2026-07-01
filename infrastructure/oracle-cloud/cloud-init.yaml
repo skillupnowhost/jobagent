@@ -1,0 +1,73 @@
+#cloud-config
+# ============================================================
+# Oracle Cloud — VM Cloud Init Script
+# Paste this into "Cloud-Init Script" when creating the VM
+# ============================================================
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - python3.11
+  - python3.11-venv
+  - python3-pip
+  - nginx
+  - redis-server
+  - git
+  - curl
+  - wget
+  - build-essential
+  - libpq-dev
+  - certbot
+  - python3-certbot-nginx
+
+runcmd:
+  # Install Node.js 20
+  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - apt-get install -y nodejs
+
+  # Create app user
+  - useradd -m -s /bin/bash jobagent
+
+  # Create directories
+  - mkdir -p /opt/job-agent
+  - mkdir -p /var/log/job-agent
+  - chown jobagent:jobagent /opt/job-agent /var/log/job-agent
+
+  # Enable services
+  - systemctl enable redis
+  - systemctl start redis
+  - systemctl enable nginx
+
+  # Open firewall ports
+  - iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+  - iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+  - netfilter-persistent save
+
+write_files:
+  - path: /etc/systemd/system/job-agent-backend.service
+    content: |
+      [Unit]
+      Description=AI Job Agent Backend
+      After=network.target redis.service
+      Wants=redis.service
+
+      [Service]
+      Type=exec
+      User=jobagent
+      Group=jobagent
+      WorkingDirectory=/opt/job-agent/backend
+      Environment=PATH=/opt/job-agent/backend/venv/bin:/usr/bin
+      EnvironmentFile=/opt/job-agent/.env
+      ExecStart=/opt/job-agent/backend/venv/bin/gunicorn app.main:app \
+          --worker-class uvicorn.workers.UvicornWorker \
+          --workers 2 \
+          --bind 127.0.0.1:8000 \
+          --timeout 120
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+final_message: "Oracle Cloud VM ready for AI Job Agent deployment"

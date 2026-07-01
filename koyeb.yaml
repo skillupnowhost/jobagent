@@ -1,0 +1,22 @@
+name: job-agent
+type: web
+dockerfile:
+  path: ./Dockerfile
+ports:
+  - port: 8000
+    protocol: http
+instance_type: free
+regions:
+  - fra
+scaling:
+  min: 1
+  max: 1
+health_check:
+  http:
+    path: /health
+    port: 8000
+env:
+  - key: APP_ENV
+    value: production
+  - key: DATABASE_URL
+    value: SET_VIA_KOYEB_DASHBOARD
