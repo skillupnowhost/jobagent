@@ -6,6 +6,8 @@ services:
     plan: free
     region: singapore
     healthCheckPath: /health
+    autoDeploy: true
+    branch: main
     envVars:
       - key: APP_ENV
         value: production
