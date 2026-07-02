@@ -35,16 +35,31 @@ export default function Profile() {
       .catch(() => {});
   }, []);
 
-  const save = async () => {
+  const save = async (data = profile) => {
     setSaving(true);
     try {
-      await profileApi.save(profile);
+      const res = await profileApi.save(data);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+      return res.data;
     } catch (e) {
       alert('Error saving profile');
+      return null;
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
+  };
+
+  const handleManualSave = async () => {
+    const saveResult = await save();
+    if (saveResult) {
+      setUploadMsg({
+        type: 'success',
+        text: saveResult.agent_triggered
+          ? 'Profile saved — the agent is now searching and applying to matching jobs.'
+          : `Profile saved, but auto-apply is paused until you add: ${saveResult.missing_sections.join(', ')}.`,
+      });
+    }
   };
 
   const update = (field, value) => setProfile(p => ({ ...p, [field]: value }));
@@ -80,12 +95,20 @@ export default function Profile() {
       }
 
       setProfile(merged);
-      setUploadMsg({
-        type: 'success',
-        text: source === 'ai'
-          ? `AI filled ${filled.length} field${filled.length !== 1 ? 's' : ''}: ${filled.join(', ')}`
-          : `Extracted ${filled.length} field${filled.length !== 1 ? 's' : ''}: ${filled.join(', ')} (add ANTHROPIC_API_KEY for full AI extraction)`,
-      });
+
+      const extractedSummary = source === 'ai'
+        ? `AI filled ${filled.length} field${filled.length !== 1 ? 's' : ''}: ${filled.join(', ')}.`
+        : `Extracted ${filled.length} field${filled.length !== 1 ? 's' : ''}: ${filled.join(', ')} (add ANTHROPIC_API_KEY for full AI extraction).`;
+
+      const saveResult = await save(merged);
+      let statusText = extractedSummary;
+      if (saveResult) {
+        statusText += saveResult.agent_triggered
+          ? ' Profile saved — the agent is now searching and applying to matching jobs.'
+          : ` Profile saved, but auto-apply is paused until you add: ${saveResult.missing_sections.join(', ')}.`;
+      }
+
+      setUploadMsg({ type: 'success', text: statusText });
     } catch (err) {
       setUploadMsg({
         type: 'error',
@@ -159,7 +182,7 @@ export default function Profile() {
             {uploading ? <><Loader size={16} className="animate-spin" /> Parsing...</> : <><Upload size={16} /> Upload Resume</>}
           </button>
           <button
-            onClick={save}
+            onClick={handleManualSave}
             disabled={saving}
             className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition ${
               saved ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'

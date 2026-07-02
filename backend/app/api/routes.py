@@ -17,6 +17,7 @@ from app.services.application_tracker import ApplicationTracker
 from app.services.skill_analyzer import SkillAnalyzer
 from app.services.email_service import EmailService
 from app.services.scheduler import job_search_cycle
+from app.services.profile_utils import is_profile_complete
 
 router = APIRouter()
 
@@ -66,7 +67,11 @@ def get_profile(db: Session = Depends(get_db)):
 
 
 @router.post("/profile")
-def create_or_update_profile(data: ProfileCreate, db: Session = Depends(get_db)):
+def create_or_update_profile(
+    data: ProfileCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     user = db.query(UserProfile).filter(UserProfile.email == data.email).first()
     if user:
         for key, value in data.model_dump().items():
@@ -76,7 +81,18 @@ def create_or_update_profile(data: ProfileCreate, db: Session = Depends(get_db))
         db.add(user)
     db.commit()
     db.refresh(user)
-    return {"message": "Profile saved", "user_id": user.id}
+
+    complete, missing = is_profile_complete(_user_to_dict(user))
+    if complete:
+        background_tasks.add_task(job_search_cycle)
+
+    return {
+        "message": "Profile saved",
+        "user_id": user.id,
+        "profile_complete": complete,
+        "missing_sections": missing,
+        "agent_triggered": complete,
+    }
 
 
 # ── Resume Routes ──
@@ -443,6 +459,7 @@ def _user_to_dict(user: UserProfile) -> dict:
         "certifications": user.certifications or [],
         "projects": user.projects or [],
         "preferred_roles": user.preferred_roles or [],
+        "preferred_locations": user.preferred_locations or [],
     }
 
 

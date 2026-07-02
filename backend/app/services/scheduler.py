@@ -15,6 +15,7 @@ from app.services.resume_builder import generate_resume_pdf, generate_cover_lett
 from app.services.application_tracker import ApplicationTracker
 from app.services.skill_analyzer import SkillAnalyzer
 from app.services.email_service import EmailService
+from app.services.profile_utils import is_profile_complete
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,11 @@ async def job_search_cycle():
             return
 
         profile = _user_to_dict(user)
+        complete, missing = is_profile_complete(profile)
+        if not complete:
+            logger.warning(f"Profile incomplete (missing: {', '.join(missing)}). Skipping auto-apply job search.")
+            return
+
         queries = get_search_queries_for_profile(profile)
         searcher = JobSearchAggregator()
 
