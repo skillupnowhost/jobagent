@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://resume-agent-backend.onrender.com/api/:path*"
+      "destination": "https://resume-agent-backend-s1d5.onrender.com/api/:path*"
     },
     {
       "source": "/((?!api/).*)",
