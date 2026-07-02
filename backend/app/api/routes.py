@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, File, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import Optional
+from jose import JWTError
 from app.database import get_db
 from app.models.user import UserProfile
 from app.models.job import Job
@@ -18,11 +20,42 @@ from app.services.skill_analyzer import SkillAnalyzer
 from app.services.email_service import EmailService
 from app.services.scheduler import job_search_cycle
 from app.services.profile_utils import is_profile_complete
+from app.services.auth_service import hash_password, verify_password, create_access_token, decode_access_token
 
 router = APIRouter()
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
+def get_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> UserProfile:
+    credentials_error = HTTPException(status_code=401, detail="Could not validate credentials")
+    if not token:
+        raise credentials_error
+    try:
+        user_id = decode_access_token(token)
+    except JWTError:
+        raise credentials_error
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).first()
+    if not user:
+        raise credentials_error
+    return user
+
 
 # ── Pydantic Schemas ──
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
 
 class ProfileCreate(BaseModel):
     name: str
@@ -56,14 +89,41 @@ class ApplicationStatusUpdate(BaseModel):
     notes: str = None
 
 
+# ── Auth Routes ──
+
+@router.post("/auth/register", response_model=LoginResponse)
+def register(data: RegisterRequest, db: Session = Depends(get_db)):
+    existing = db.query(UserProfile).filter(UserProfile.email == data.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="An account with this email already exists")
+
+    user = UserProfile(name=data.name, email=data.email, hashed_password=hash_password(data.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return LoginResponse(access_token=create_access_token(user.id))
+
+
+@router.post("/auth/login", response_model=LoginResponse)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(UserProfile).filter(UserProfile.email == form_data.username).first()
+    if not user or not user.hashed_password or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+
+    return LoginResponse(access_token=create_access_token(user.id))
+
+
+@router.get("/auth/me")
+def get_me(current_user: UserProfile = Depends(get_current_user)):
+    return _user_public_dict(current_user)
+
+
 # ── Profile Routes ──
 
 @router.get("/profile")
-def get_profile(db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found. Please create one.")
-    return user
+def get_profile(current_user: UserProfile = Depends(get_current_user)):
+    return _user_public_dict(current_user)
 
 
 @router.post("/profile")
@@ -71,24 +131,27 @@ def create_or_update_profile(
     data: ProfileCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
 ):
-    user = db.query(UserProfile).filter(UserProfile.email == data.email).first()
-    if user:
-        for key, value in data.model_dump().items():
-            setattr(user, key, value)
-    else:
-        user = UserProfile(**data.model_dump())
-        db.add(user)
-    db.commit()
-    db.refresh(user)
+    if data.email != current_user.email:
+        email_taken = db.query(UserProfile).filter(
+            UserProfile.email == data.email, UserProfile.id != current_user.id
+        ).first()
+        if email_taken:
+            raise HTTPException(status_code=400, detail="An account with this email already exists")
 
-    complete, missing = is_profile_complete(_user_to_dict(user))
+    for key, value in data.model_dump().items():
+        setattr(current_user, key, value)
+    db.commit()
+    db.refresh(current_user)
+
+    complete, missing = is_profile_complete(_user_to_dict(current_user))
     if complete:
         background_tasks.add_task(job_search_cycle)
 
     return {
         "message": "Profile saved",
-        "user_id": user.id,
+        "user_id": current_user.id,
         "profile_complete": complete,
         "missing_sections": missing,
         "agent_triggered": complete,
@@ -98,12 +161,12 @@ def create_or_update_profile(
 # ── Resume Routes ──
 
 @router.post("/resume/generate")
-def generate_resume(job_id: int = None, db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    profile = _user_to_dict(user)
+def generate_resume(
+    job_id: int = None,
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
+    profile = _user_to_dict(current_user)
     job_data = None
     if job_id:
         job = db.query(Job).filter(Job.id == job_id).first()
@@ -121,7 +184,7 @@ def generate_resume(job_id: int = None, db: Session = Depends(get_db)):
 
 
 @router.get("/resume/download/{filename}")
-def download_resume(filename: str):
+def download_resume(filename: str, current_user: UserProfile = Depends(get_current_user)):
     import os
     resumes_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "resumes")
     filepath = os.path.join(resumes_dir, filename)
@@ -149,16 +212,16 @@ async def parse_resume_upload(file: UploadFile = File(...)):
 
 
 @router.post("/resume/cover-letter")
-def generate_cover_letter_endpoint(job_id: int, db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
+def generate_cover_letter_endpoint(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    profile = _user_to_dict(user)
+    profile = _user_to_dict(current_user)
     job_data = _job_to_dict(job)
     letter = generate_cover_letter(profile, job_data)
     return {"cover_letter": letter}
@@ -170,18 +233,16 @@ def generate_cover_letter_endpoint(job_id: int, db: Session = Depends(get_db)):
 async def search_jobs(
     query: str = "QA Engineer",
     location: str = "India",
-    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
 ):
     searcher = JobSearchAggregator()
     jobs = await searcher.search_all(query, location)
 
-    user = db.query(UserProfile).first()
-    if user:
-        profile = _user_to_dict(user)
-        for job_data in jobs:
-            match = calculate_match_score(profile, job_data)
-            job_data["match_score"] = match["total_score"]
-            job_data["match_details"] = match
+    profile = _user_to_dict(current_user)
+    for job_data in jobs:
+        match = calculate_match_score(profile, job_data)
+        job_data["match_score"] = match["total_score"]
+        job_data["match_details"] = match
 
     jobs.sort(key=lambda x: x.get("match_score", 0), reverse=True)
     return {"count": len(jobs), "jobs": jobs}
@@ -195,6 +256,7 @@ def list_jobs(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
 ):
     query = db.query(Job).filter(Job.is_active == True)
     if min_score > 0:
@@ -210,7 +272,10 @@ def list_jobs(
 
 
 @router.post("/jobs/trigger-search")
-async def trigger_search(background_tasks: BackgroundTasks):
+async def trigger_search(
+    background_tasks: BackgroundTasks,
+    current_user: UserProfile = Depends(get_current_user),
+):
     background_tasks.add_task(job_search_cycle)
     return {"message": "Job search triggered in background"}
 
@@ -223,13 +288,10 @@ def list_applications(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
 ):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
     tracker = ApplicationTracker(db)
-    apps = tracker.get_all_applications(user.id, status, limit, offset)
+    apps = tracker.get_all_applications(current_user.id, status, limit, offset)
 
     result = []
     for app in apps:
@@ -259,26 +321,40 @@ def update_application_status(
     app_id: int,
     data: ApplicationStatusUpdate,
     db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
 ):
+    owned = db.query(Application).filter(
+        Application.id == app_id, Application.user_id == current_user.id
+    ).first()
+    if not owned:
+        raise HTTPException(status_code=404, detail="Application not found")
+
     tracker = ApplicationTracker(db)
     app = tracker.update_status(app_id, data.status, data.notes)
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
     return {"message": "Status updated", "status": app.status}
 
 
 @router.get("/applications/stats")
-def get_application_stats(db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
+def get_application_stats(
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
     tracker = ApplicationTracker(db)
-    return tracker.get_statistics(user.id)
+    return tracker.get_statistics(current_user.id)
 
 
 @router.get("/applications/{app_id}/logs")
-def get_application_logs(app_id: int, db: Session = Depends(get_db)):
+def get_application_logs(
+    app_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
+    owned = db.query(Application).filter(
+        Application.id == app_id, Application.user_id == current_user.id
+    ).first()
+    if not owned:
+        raise HTTPException(status_code=404, detail="Application not found")
+
     logs = db.query(ApplicationLog).filter(
         ApplicationLog.application_id == app_id
     ).order_by(ApplicationLog.timestamp.desc()).all()
@@ -295,12 +371,11 @@ def get_application_logs(app_id: int, db: Session = Depends(get_db)):
 # ── Skill Routes ──
 
 @router.get("/skills/gaps")
-def get_skill_gaps(db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    user_skills = user.skills or []
+def get_skill_gaps(
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
+    user_skills = current_user.skills or []
     if user_skills and isinstance(user_skills[0], dict):
         flat = []
         for cat in user_skills:
@@ -308,17 +383,17 @@ def get_skill_gaps(db: Session = Depends(get_db)):
         user_skills = flat
 
     analyzer = SkillAnalyzer(db)
-    return analyzer.analyze_gaps(user.id, user_skills)
+    return analyzer.analyze_gaps(current_user.id, user_skills)
 
 
 @router.post("/skills/progress")
-def update_skill_progress(data: SkillUpdate, db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
+def update_skill_progress(
+    data: SkillUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
     analyzer = SkillAnalyzer(db)
-    progress = analyzer.track_progress(user.id, data.skill_name, data.hours, data.level)
+    progress = analyzer.track_progress(current_user.id, data.skill_name, data.hours, data.level)
     return {
         "skill": progress.skill_name,
         "level": progress.current_level,
@@ -328,22 +403,20 @@ def update_skill_progress(data: SkillUpdate, db: Session = Depends(get_db)):
 
 
 @router.get("/skills/progress")
-def get_skill_progress(db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
+def get_skill_progress(
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
     analyzer = SkillAnalyzer(db)
-    return analyzer.get_user_progress(user.id)
+    return analyzer.get_user_progress(current_user.id)
 
 
 @router.get("/skills/recommendations")
-def get_job_targeting(db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    user_skills = user.skills or []
+def get_job_targeting(
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
+    user_skills = current_user.skills or []
     if user_skills and isinstance(user_skills[0], dict):
         flat = []
         for cat in user_skills:
@@ -351,23 +424,26 @@ def get_job_targeting(db: Session = Depends(get_db)):
         user_skills = flat
 
     analyzer = SkillAnalyzer(db)
-    return analyzer.refine_job_targeting(user.id, user_skills)
+    return analyzer.refine_job_targeting(current_user.id, user_skills)
 
 
 # ── Report Routes ──
 
 @router.get("/reports/daily")
-def get_daily_report(db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
+def get_daily_report(
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
     tracker = ApplicationTracker(db)
-    return tracker.generate_daily_report(user.id)
+    return tracker.generate_daily_report(current_user.id)
 
 
 @router.get("/reports/history")
-def get_report_history(limit: int = 30, db: Session = Depends(get_db)):
+def get_report_history(
+    limit: int = 30,
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
     reports = db.query(DailyReport).order_by(
         DailyReport.report_date.desc()
     ).limit(limit).all()
@@ -387,19 +463,15 @@ def get_report_history(limit: int = 30, db: Session = Depends(get_db)):
 # ── Dashboard ──
 
 @router.get("/dashboard")
-def get_dashboard_data(db: Session = Depends(get_db)):
-    user = db.query(UserProfile).first()
-    if not user:
-        return {
-            "profile_exists": False,
-            "message": "Please create your profile to get started",
-        }
-
+def get_dashboard_data(
+    db: Session = Depends(get_db),
+    current_user: UserProfile = Depends(get_current_user),
+):
     tracker = ApplicationTracker(db)
-    stats = tracker.get_statistics(user.id)
+    stats = tracker.get_statistics(current_user.id)
 
     recent_apps = db.query(Application).filter(
-        Application.user_id == user.id
+        Application.user_id == current_user.id
     ).order_by(Application.created_at.desc()).limit(10).all()
 
     recent = []
@@ -422,7 +494,7 @@ def get_dashboard_data(db: Session = Depends(get_db)):
 
     return {
         "profile_exists": True,
-        "user_name": user.name,
+        "user_name": current_user.name,
         "statistics": stats,
         "recent_applications": recent,
         "top_matching_jobs": [
@@ -440,6 +512,14 @@ def get_dashboard_data(db: Session = Depends(get_db)):
 
 
 # ── Helpers ──
+
+def _user_public_dict(user: UserProfile) -> dict:
+    """Profile fields safe to return over the API — excludes hashed_password."""
+    data = _user_to_dict(user)
+    data["id"] = user.id
+    data["preferred_companies"] = user.preferred_companies or []
+    return data
+
 
 def _user_to_dict(user: UserProfile) -> dict:
     return {

@@ -1,7 +1,7 @@
 import React from 'react';
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Routes, Route, Navigate, NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, FileText, Search, Send, Brain, BarChart3, User, Menu, X
+  LayoutDashboard, FileText, Search, Send, Brain, BarChart3, User, Menu, X, LogOut
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Applications from './pages/Applications';
@@ -10,6 +10,9 @@ import Resume from './pages/Resume';
 import Skills from './pages/Skills';
 import Reports from './pages/Reports';
 import Profile from './pages/Profile';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import { useAuth } from './context/AuthContext';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -21,8 +24,44 @@ const navItems = [
   { to: '/profile', icon: User, label: 'Profile' },
 ];
 
+function RequireAuth({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center text-gray-400 text-sm">Loading...</div>;
+  }
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+}
+
 export default function App() {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (!loading && !isAuthenticated) {
+    return (
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
+
+  return (
+    <RequireAuth>
+      <Routes>
+        <Route path="/login" element={<Navigate to="/" replace />} />
+        <Route path="/register" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<AppShell />} />
+      </Routes>
+    </RequireAuth>
+  );
+}
+
+function AppShell() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const { user, logout } = useAuth();
 
   return (
     <div className="min-h-screen flex bg-gray-50">
@@ -65,11 +104,17 @@ export default function App() {
             </NavLink>
           ))}
         </nav>
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-slate-700">
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-slate-700 space-y-3">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
             <span className="text-xs text-slate-400">Agent Active</span>
           </div>
+          <button
+            onClick={logout}
+            className="flex items-center gap-2 text-xs text-slate-300 hover:text-white transition"
+          >
+            <LogOut size={14} /> Sign out
+          </button>
         </div>
       </aside>
 
@@ -79,7 +124,8 @@ export default function App() {
           <button className="lg:hidden text-gray-600" onClick={() => setSidebarOpen(true)}>
             <Menu size={24} />
           </button>
-          <h2 className="text-lg font-semibold text-gray-800">AI Job Application Agent</h2>
+          <h2 className="text-lg font-semibold text-gray-800 flex-1">AI Job Application Agent</h2>
+          {user?.name && <span className="text-sm text-gray-500 hidden sm:inline">{user.name}</span>}
         </header>
         <main className="flex-1 p-4 lg:p-6 overflow-auto">
           <Routes>

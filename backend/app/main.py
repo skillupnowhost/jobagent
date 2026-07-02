@@ -25,6 +25,11 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing AI Job Application Agent...")
+    if settings.app_env == "production" and settings.secret_key == "change-me-in-production":
+        logger.warning(
+            "SECRET_KEY is unset in production — auth tokens are signed with a public default. "
+            "Set the SECRET_KEY environment variable immediately."
+        )
     init_db()
     logger.info("Database initialized")
 

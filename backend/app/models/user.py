@@ -10,6 +10,7 @@ class UserProfile(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False)
     email = Column(String(200), nullable=False, unique=True)
+    hashed_password = Column(String(255), nullable=True)
     phone = Column(String(50))
     location = Column(String(200))
     linkedin_url = Column(String(500))
