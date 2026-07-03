@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { getErrorMessage } from '../../services/api'
 
 export default function MFAChallenge() {
   const { mfaRequired, verifyMfa } = useAuth()
@@ -22,7 +23,7 @@ export default function MFAChallenge() {
       await verifyMfa(code)
       navigate('/')
     } catch (err) {
-      setError(err.response?.data?.detail || 'Invalid code. Please try again.')
+      setError(getErrorMessage(err, 'Invalid code. Please try again.'))
     } finally {
       setSubmitting(false)
     }

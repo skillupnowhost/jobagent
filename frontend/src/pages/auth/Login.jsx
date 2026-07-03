@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { getErrorMessage } from '../../services/api'
 
 export default function Login() {
   const { login } = useAuth()
@@ -20,12 +21,11 @@ export default function Login() {
       const result = await login(email, password)
       navigate(result.mfaRequired ? '/mfa-challenge' : '/')
     } catch (err) {
-      const detail = err.response?.data?.detail
-      if (detail === 'email_not_verified') {
+      if (err.response?.data?.detail === 'email_not_verified') {
         setNeedsVerification(true)
         setError('Please verify your email before logging in.')
       } else {
-        setError(detail || 'Login failed. Please try again.')
+        setError(getErrorMessage(err, 'Login failed. Please try again.'))
       }
     } finally {
       setSubmitting(false)

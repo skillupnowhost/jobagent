@@ -41,5 +41,12 @@ export const dashboardApi = {
   summary: () => api.get('/dashboard/summary').then((r) => r.data),
 }
 
+export function getErrorMessage(err, fallback) {
+  if (err.response?.status === 429) {
+    return "You've made too many attempts. Please wait a while before trying again."
+  }
+  return err.response?.data?.detail || err.response?.data?.error || fallback
+}
+
 export { TOKEN_KEY }
 export default api

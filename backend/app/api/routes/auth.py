@@ -33,7 +33,7 @@ from app.schemas.auth import (
     VerifyEmailRequest,
 )
 from app.services import mfa_service
-from app.services.email_sender import send_verification_email
+from app.services.email_sender import is_email_configured, send_verification_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
@@ -61,9 +61,18 @@ def _issue_verification_token(user: User, db: Session) -> str:
     return raw_token
 
 
+def _verify_url(raw_token: str) -> str:
+    return f"{settings.frontend_url}/verify-email?token={raw_token}"
+
+
 def _send_verification_email(user: User, raw_token: str) -> None:
-    verify_url = f"{settings.frontend_url}/verify-email?token={raw_token}"
-    send_verification_email(user.email, user.name, verify_url)
+    send_verification_email(user.email, user.name, _verify_url(raw_token))
+
+
+def _dev_verify_url(raw_token: str) -> str | None:
+    if settings.app_env == "development" and not is_email_configured():
+        return _verify_url(raw_token)
+    return None
 
 
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
@@ -89,7 +98,10 @@ def register(
     raw_token = _issue_verification_token(user, db)
     background_tasks.add_task(_send_verification_email, user, raw_token)
 
-    return MessageResponse(message="Registration successful. Check your email to verify your account.")
+    return MessageResponse(
+        message="Registration successful. Check your email to verify your account.",
+        dev_verify_url=_dev_verify_url(raw_token),
+    )
 
 
 @router.post("/verify-email", response_model=MessageResponse)
@@ -132,13 +144,18 @@ def resend_verification(
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == payload.email).first()
+    dev_verify_url = None
     if user is not None and not user.is_email_verified:
         raw_token = _issue_verification_token(user, db)
         background_tasks.add_task(_send_verification_email, user, raw_token)
+        dev_verify_url = _dev_verify_url(raw_token)
 
     # Generic response regardless of whether the account exists or is
     # already verified, to avoid leaking account existence.
-    return MessageResponse(message="If an account exists and is unverified, a new email has been sent.")
+    return MessageResponse(
+        message="If an account exists and is unverified, a new email has been sent.",
+        dev_verify_url=dev_verify_url,
+    )
 
 
 @router.post("/login", response_model=LoginResponse)

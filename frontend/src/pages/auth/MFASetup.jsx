@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { authApi } from '../../services/api'
+import { authApi, getErrorMessage } from '../../services/api'
 
 export default function MFASetup() {
   const { refreshUser } = useAuth()
@@ -19,7 +19,7 @@ export default function MFASetup() {
     authApi
       .mfaSetup()
       .then(setSetupData)
-      .catch((err) => setError(err.response?.data?.detail || 'Could not start MFA setup.'))
+      .catch((err) => setError(getErrorMessage(err, 'Could not start MFA setup.')))
       .finally(() => setLoading(false))
   }, [])
 
@@ -32,7 +32,7 @@ export default function MFASetup() {
       setBackupCodes(result.backup_codes)
       await refreshUser()
     } catch (err) {
-      setError(err.response?.data?.detail || 'Invalid code. Please try again.')
+      setError(getErrorMessage(err, 'Invalid code. Please try again.'))
     } finally {
       setSubmitting(false)
     }

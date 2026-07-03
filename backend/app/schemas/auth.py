@@ -63,3 +63,4 @@ class UserOut(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+    dev_verify_url: str | None = None

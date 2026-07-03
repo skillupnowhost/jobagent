@@ -18,8 +18,12 @@ _env = Environment(
 )
 
 
+def is_email_configured() -> bool:
+    return bool(settings.smtp_user and settings.smtp_password)
+
+
 def _send(to_email: str, subject: str, html_body: str) -> None:
-    if not settings.smtp_user or not settings.smtp_password:
+    if not is_email_configured():
         logger.warning("SMTP not configured; skipping email send to %s (subject=%s)", to_email, subject)
         return
 

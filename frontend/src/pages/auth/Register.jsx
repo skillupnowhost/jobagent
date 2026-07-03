@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { getErrorMessage } from '../../services/api'
 
 export default function Register() {
   const { register } = useAuth()
@@ -27,10 +28,10 @@ export default function Register() {
 
     setSubmitting(true)
     try {
-      await register(name, email, password)
-      navigate('/verify-email', { state: { email, justRegistered: true } })
+      const result = await register(name, email, password)
+      navigate('/verify-email', { state: { email, justRegistered: true, devVerifyUrl: result.dev_verify_url } })
     } catch (err) {
-      setError(err.response?.data?.detail || 'Registration failed. Please try again.')
+      setError(getErrorMessage(err, 'Registration failed. Please try again.'))
     } finally {
       setSubmitting(false)
     }

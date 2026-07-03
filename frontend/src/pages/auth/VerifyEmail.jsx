@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { authApi } from '../../services/api'
+import { authApi, getErrorMessage } from '../../services/api'
 
 export default function VerifyEmail() {
   const { resendVerification } = useAuth()
@@ -14,6 +14,7 @@ export default function VerifyEmail() {
   const [error, setError] = useState('')
   const [resendMessage, setResendMessage] = useState('')
   const [email, setEmail] = useState(emailFromState)
+  const [devVerifyUrl, setDevVerifyUrl] = useState(location.state?.devVerifyUrl || '')
 
   useEffect(() => {
     if (!token) return
@@ -22,7 +23,7 @@ export default function VerifyEmail() {
       .then(() => setStatus('verified'))
       .catch((err) => {
         setStatus('error')
-        setError(err.response?.data?.detail || 'Invalid or expired verification link.')
+        setError(getErrorMessage(err, 'Invalid or expired verification link.'))
       })
   }, [token])
 
@@ -30,10 +31,11 @@ export default function VerifyEmail() {
     e.preventDefault()
     setResendMessage('')
     try {
-      await resendVerification(email)
+      const result = await resendVerification(email)
       setResendMessage('If an account exists and is unverified, a new email has been sent.')
-    } catch {
-      setResendMessage('Something went wrong. Please try again.')
+      setDevVerifyUrl(result.dev_verify_url || '')
+    } catch (err) {
+      setResendMessage(getErrorMessage(err, 'Something went wrong. Please try again.'))
     }
   }
 
@@ -66,6 +68,15 @@ export default function VerifyEmail() {
               We've sent a verification link to {emailFromState || 'your inbox'}. Click it to activate your account.
             </p>
           </>
+        )}
+
+        {devVerifyUrl && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4 break-all">
+            Dev mode (SMTP not configured):{' '}
+            <a href={devVerifyUrl} className="underline font-medium">
+              click here to verify
+            </a>
+          </p>
         )}
 
         {(status === 'pending' || status === 'error') && (

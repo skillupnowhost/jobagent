@@ -8,6 +8,13 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 @router.get("/summary")
 def summary(current_user: User = Depends(get_current_verified_user)):
+    next_steps = [
+        "Complete your profile",
+        "Upload your resume",
+    ]
+    if not current_user.mfa_enabled:
+        next_steps.append("Set up multi-factor authentication")
+
     return {
         "user": {
             "id": current_user.id,
@@ -22,9 +29,5 @@ def summary(current_user: User = Depends(get_current_verified_user)):
             "profile_completeness": 0,
         },
         "recent_activity": [],
-        "next_steps": [
-            "Complete your profile",
-            "Upload your resume",
-            "Set up multi-factor authentication",
-        ],
+        "next_steps": next_steps,
     }
