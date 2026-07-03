@@ -1,38 +1,36 @@
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, JSON
-from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
+
+from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database import Base
 
 
-class UserProfile(Base):
-    __tablename__ = "user_profiles"
+class User(Base):
+    __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(200), nullable=False)
-    email = Column(String(200), nullable=False, unique=True)
-    hashed_password = Column(String(255), nullable=True)
-    phone = Column(String(50))
-    location = Column(String(200))
-    linkedin_url = Column(String(500))
-    github_url = Column(String(500))
-    portfolio_url = Column(String(500))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    professional_summary = Column(Text)
-    experience_years = Column(Float, default=2.6)
-    min_salary_lpa = Column(Float, default=10.0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    skills = Column(JSON, default=list)
-    experience = Column(JSON, default=list)
-    education = Column(JSON, default=list)
-    certifications = Column(JSON, default=list)
-    projects = Column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
-    preferred_roles = Column(JSON, default=list)
-    preferred_locations = Column(JSON, default=list)
-    preferred_companies = Column(JSON, default=list)
-
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    applications = relationship("Application", back_populates="user")
-    skill_progress = relationship("SkillProgress", back_populates="user")
+    verification_tokens = relationship(
+        "EmailVerificationToken", back_populates="user", cascade="all, delete-orphan"
+    )
+    mfa_secret = relationship(
+        "MFASecret", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+    mfa_backup_codes = relationship(
+        "MFABackupCode", back_populates="user", cascade="all, delete-orphan"
+    )

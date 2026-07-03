@@ -1,89 +1,53 @@
 import logging
-from contextlib import asynccontextmanager
 from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import os
+from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
+from app.api.routes import api_router
 from app.config import get_settings
-from app.database import init_db
-from app.api.routes import router
-from app.services.scheduler import start_scheduler
+from app.core.rate_limit import limiter
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+if settings.app_env == "production" and settings.secret_key == "change-me-in-production":
+    logger.warning("SECRET_KEY is still the default value in a production environment!")
 
+app = FastAPI(title=settings.app_name)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Initializing AI Job Application Agent...")
-    if settings.app_env == "production" and settings.secret_key == "change-me-in-production":
-        logger.warning(
-            "SECRET_KEY is unset in production — auth tokens are signed with a public default. "
-            "Set the SECRET_KEY environment variable immediately."
-        )
-    init_db()
-    logger.info("Database initialized")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    start_scheduler()
-    logger.info("Scheduler started — automated job search is active")
-
-    resumes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resumes")
-    os.makedirs(resumes_dir, exist_ok=True)
-
-    yield
-
-    logger.info("Shutting down AI Job Application Agent...")
-
-
-app = FastAPI(
-    title="AI Job Application Agent",
-    description="Automated 24/7 job application agent with resume generation, job matching, and tracking",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
+# Auth uses a Bearer token in a header, not cookies, so allow_credentials
+# must be False for a wildcard allow_origins to be valid/correct.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api")
+app.include_router(api_router)
 
 
 @app.get("/health")
-def health_check():
-    return {"status": "healthy"}
+def health():
+    return {"status": "ok"}
 
 
-# Serve React frontend from /static if it exists (production single-container mode)
-if STATIC_DIR.exists():
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+if STATIC_DIR.is_dir():
     app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
 
-    @app.get("/{path:path}")
-    async def serve_frontend(path: str):
-        file_path = STATIC_DIR / path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(str(file_path))
-        return FileResponse(str(STATIC_DIR / "index.html"))
-else:
-    @app.get("/")
-    def root():
-        return {
-            "name": "AI Job Application Agent",
-            "version": "1.0.0",
-            "status": "running",
-            "docs": "/docs",
-            "note": "Frontend not bundled. Run frontend separately: cd frontend && npm run dev",
-        }
+    @app.get("/{full_path:path}")
+    def spa_fallback(full_path: str):
+        candidate = STATIC_DIR / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(STATIC_DIR / "index.html")

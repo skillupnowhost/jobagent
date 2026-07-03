@@ -1,59 +1,88 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { authApi } from '../services/api';
+import { createContext, useContext, useEffect, useState } from 'react'
+import { authApi, TOKEN_KEY } from '../services/api'
 
-const AuthContext = createContext(null);
+const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadUser = useCallback(async () => {
-    if (!authApi.getToken()) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-    try {
-      const res = await authApi.me();
-      setUser(res.data);
-    } catch {
-      authApi.clearToken();
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [user, setUser] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [mfaRequired, setMfaRequired] = useState(false)
+  const [pendingMfaToken, setPendingMfaToken] = useState(null)
 
   useEffect(() => {
-    loadUser();
-  }, [loadUser]);
+    const token = localStorage.getItem(TOKEN_KEY)
+    if (!token) {
+      setLoading(false)
+      return
+    }
+    authApi
+      .me()
+      .then(setUser)
+      .catch(() => localStorage.removeItem(TOKEN_KEY))
+      .finally(() => setLoading(false))
+  }, [])
 
-  const login = async (email, password) => {
-    const res = await authApi.login(email, password);
-    authApi.setToken(res.data.access_token);
-    await loadUser();
-  };
+  async function login(email, password) {
+    const data = await authApi.login({ email, password })
+    if (data.mfa_required) {
+      setMfaRequired(true)
+      setPendingMfaToken(data.mfa_pending_token)
+      return { mfaRequired: true }
+    }
+    localStorage.setItem(TOKEN_KEY, data.access_token)
+    const me = await authApi.me()
+    setUser(me)
+    return { mfaRequired: false }
+  }
 
-  const register = async (name, email, password) => {
-    const res = await authApi.register(name, email, password);
-    authApi.setToken(res.data.access_token);
-    await loadUser();
-  };
+  async function verifyMfa(code) {
+    const data = await authApi.mfaVerify({ mfa_pending_token: pendingMfaToken, code })
+    localStorage.setItem(TOKEN_KEY, data.access_token)
+    const me = await authApi.me()
+    setUser(me)
+    setMfaRequired(false)
+    setPendingMfaToken(null)
+  }
 
-  const logout = () => {
-    authApi.clearToken();
-    setUser(null);
-  };
+  async function register(name, email, password) {
+    return authApi.register({ name, email, password })
+  }
 
-  return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, isAuthenticated: !!user }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  async function resendVerification(email) {
+    return authApi.resendVerification(email)
+  }
+
+  function logout() {
+    localStorage.removeItem(TOKEN_KEY)
+    setUser(null)
+    setMfaRequired(false)
+    setPendingMfaToken(null)
+  }
+
+  async function refreshUser() {
+    const me = await authApi.me()
+    setUser(me)
+    return me
+  }
+
+  const value = {
+    user,
+    loading,
+    isAuthenticated: Boolean(user),
+    mfaRequired,
+    login,
+    verifyMfa,
+    register,
+    resendVerification,
+    logout,
+    refreshUser,
+  }
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
+  return ctx
 }

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <body style="font-family: Arial, sans-serif; background:#f4f4f5; padding:24px;">
+    <div style="max-width:480px; margin:0 auto; background:#ffffff; border-radius:8px; padding:32px;">
+      <h2 style="color:#111827;">Verify your email</h2>
+      <p style="color:#374151;">Hi {{ name }},</p>
+      <p style="color:#374151;">
+        Confirm your email address to activate your AI Job Application Agent account.
+      </p>
+      <p style="text-align:center; margin:32px 0;">
+        <a href="{{ verify_url }}"
+           style="background:#2563eb; color:#ffffff; padding:12px 24px; border-radius:6px; text-decoration:none;">
+          Verify Email
+        </a>
+      </p>
+      <p style="color:#6b7280; font-size:13px;">
+        This link expires in {{ expire_hours }} hours. If you didn't create this account, you can ignore this email.
+      </p>
+    </div>
+  </body>
+</html>
